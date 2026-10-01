@@ -3,14 +3,14 @@ const path = require("path")
 const filePath = path.join(__dirname, "..", "db.json")
 
 async function delay() {
-    await new Promise((resolve, reject) => {
+    await new Promise((resolve) => {
         setTimeout(resolve, 1500)
     })
 }
 
 async function readData() {
     await delay()
-    let products = await fs.readFile(filePath, "utf-8")
+    const products = await fs.readFile(filePath, "utf-8")
     return JSON.parse(products)
 }
 
