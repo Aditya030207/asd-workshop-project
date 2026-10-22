@@ -1,14 +1,9 @@
-const express = require("express")
+const express = require('express')
+const { routes } = require('./productDefinitions')
 const router = express.Router()
-const productController = require("../controllers/productController")
-const { cacheMiddleware, clearCacheMiddleware } = require("../middleware/cache")
 
-router.get("/", cacheMiddleware, productController.getAllProducts)
-router.get("/:id", cacheMiddleware, productController.getProductById)
-
-router.post("/", clearCacheMiddleware, productController.addProduct)
-router.put("/:id", clearCacheMiddleware, productController.replaceProduct)
-router.patch("/:id", clearCacheMiddleware, productController.updateProduct)
-router.delete("/:id", clearCacheMiddleware, productController.deleteProduct)
+for (const route of routes) {
+    router[route.method.toLowerCase()](route.path, ...route.handlers)
+}
 
 module.exports = router

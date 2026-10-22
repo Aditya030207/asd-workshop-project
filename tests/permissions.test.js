@@ -1,0 +1,73 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const { spawnSync } = require('node:child_process')
+const path = require('node:path')
+const express = require('express')
+const { auditRoutes } = require('permission-gap-detector')
+const { basePath, routes } = require('../routes/productDefinitions')
+const router = require('../routes/productRoutes')
+const { getRouteDeclarations, getDemoDeclarations } = require('../scripts/audit-permissions')
+
+const root = path.join(__dirname, '..')
+const run = (...args) => spawnSync(process.execPath, ['scripts/audit-permissions.js', ...args], { cwd: root, encoding: 'utf8' })
+
+test('published npm package audits all six actual product declarations', () => {
+    assert.equal(require('permission-gap-detector/package.json').version, '1.0.2')
+    const result = auditRoutes(getRouteDeclarations())
+    assert.equal(result.summary.totalRoutes, 6)
+    assert.equal(result.summary.coveragePercentage, 100)
+    assert.equal(result.hasIssues, false)
+})
+
+test('Express registration matches the audited definitions and handler order', () => {
+    const registered = router.stack.filter(layer => layer.route).map(layer => layer.route)
+    assert.equal(registered.length, routes.length)
+    registered.forEach((route, index) => {
+        assert.equal(route.path, routes[index].path)
+        assert.equal(route.methods[routes[index].method.toLowerCase()], true)
+        assert.deepEqual(route.stack.map(layer => layer.handle), routes[index].handlers)
+    })
+    assert.equal(getRouteDeclarations()[0].path, '/products')
+    assert.equal(getRouteDeclarations()[1].path, '/products/:id')
+})
+
+test('failure demo detects missing policy, duplicate, and conflict without mutating real declarations', () => {
+    const before = getRouteDeclarations()
+    const result = auditRoutes(getDemoDeclarations())
+    assert.equal(result.summary.missingPermissions, 1)
+    assert.equal(result.summary.duplicateRoutes, 1)
+    assert.equal(result.summary.conflictingRoutes, 1)
+    assert.equal(result.findings.missingPermissions[0].method, 'DELETE')
+    assert.equal(result.findings.missingPermissions[0].path, '/products/:id')
+    assert.deepEqual(result.findings.conflictingPermissions[0].permissions, ['public', 'admin'])
+    assert.deepEqual(getRouteDeclarations(), before)
+})
+
+test('normal audit command succeeds and failure demo exits 1 with JSON evidence', () => {
+    const clean = run('--json')
+    assert.equal(clean.status, 0)
+    assert.equal(JSON.parse(clean.stdout).hasIssues, false)
+    const demo = run('--demo', '--json')
+    assert.equal(demo.status, 1)
+    assert.equal(JSON.parse(demo.stdout).summary.missingPermissions, 1)
+    const bad = run('--unknown')
+    assert.equal(bad.status, 2)
+})
+
+test('GET /products still serves real product data and preserves cache middleware', async t => {
+    const app = express()
+    app.use(basePath, router)
+    const server = app.listen(0, '127.0.0.1')
+    t.after(() => { server.closeAllConnections(); server.close() })
+    await new Promise(resolve => server.once('listening', resolve))
+    const url = `http://127.0.0.1:${server.address().port}/products`
+    const first = await fetch(url)
+    assert.equal(first.status, 200)
+    assert.equal(first.headers.get('x-cache'), 'MISS')
+    const products = await first.json()
+    assert.ok(Array.isArray(products))
+    const second = await fetch(url)
+    assert.equal(second.status, 200)
+    assert.equal(second.headers.get('x-cache'), 'HIT')
+    assert.deepEqual(await second.json(), products)
+})
